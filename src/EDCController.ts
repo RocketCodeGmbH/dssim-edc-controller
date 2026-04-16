@@ -32,6 +32,9 @@ import {DataAddressDto, EDCConnector} from 'edc-lib';
 import {UsageRuleMapper} from './UsageRuleMapper.js';
 import {v4 as uuid} from 'uuid';
 
+const DSP_PROTOCOL = 'dataspace-protocol-http:2025-1';
+const DSP_VERSION_PATH = '/2025-1';
+
 export class EDCController implements ConnectorController {
   public connectorApi: EDCConnector;
   private httpReceiverUrl?: string;
@@ -67,15 +70,17 @@ export class EDCController implements ConnectorController {
     }
   ): Promise<{contractId: string}> {
     const connectorAddress = `${endPointUrl}:${
-      this.endpoints.find(e => e.name === 'ids')?.port
-    }${this.endpoints.find(e => e.name === 'ids')?.path}/data`;
+      this.endpoints.find(e => e.name === 'protocol')?.port
+    }${
+      this.endpoints.find(e => e.name === 'protocol')?.path
+    }${DSP_VERSION_PATH}`;
 
     const nego =
       await this.connectorApi.contractNegotiationService.initiateContractNegotiation(
         {
           connectorId: 'http-pull-provider',
           connectorAddress: connectorAddress,
-          protocol: 'ids-multipart',
+          protocol: DSP_PROTOCOL,
           offer: {
             offerId: offeredRessource.offerId,
             assetId: offeredRessource.assetId,
@@ -138,7 +143,7 @@ export class EDCController implements ConnectorController {
             type: 'HttpData',
           },
         },
-        protocol: 'ids-multipart',
+        protocol: DSP_PROTOCOL,
         transferType: {},
       });
     }
@@ -152,10 +157,12 @@ export class EDCController implements ConnectorController {
       assetName: string;
     }[]
   > {
+    const protocolEndpoint = this.endpoints.find(e => e.name === 'protocol');
+    const counterPartyAddress = `${providerUrl}:${protocolEndpoint?.port}${protocolEndpoint?.path}${DSP_VERSION_PATH}`;
     const result = await this.connectorApi.catalogService.requestCatalog({
-      providerUrl: `${providerUrl}:${
-        this.endpoints.find(e => e.name === 'ids')?.port
-      }${this.endpoints.find(e => e.name === 'ids')?.path}/data`,
+      counterPartyAddress,
+      counterPartyId: providerUrl,
+      protocol: DSP_PROTOCOL,
     });
     console.log(result['contractOffers']![0]);
 
