@@ -34,7 +34,7 @@ import {v4 as uuid} from 'uuid';
 
 export class EDCController implements ConnectorController {
   public connectorApi: EDCConnector;
-  private httpReceiverUrl?: string;
+  protected httpReceiverUrl?: string;
 
   private agreements: {
     [agreementId: string]: {providerUrl: string; assetId: string};
