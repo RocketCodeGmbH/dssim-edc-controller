@@ -18,4 +18,3 @@
  *
  */
 export {EDCController} from './EDCController.js';
-export {SplitEDCController} from './SplitEDCController.js';
