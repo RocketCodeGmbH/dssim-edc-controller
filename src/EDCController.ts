@@ -45,8 +45,7 @@ export class EDCController implements ConnectorController {
 
   constructor(
     hostname: string,
-    username: string,
-    password: string,
+    apiKey: string,
     endpoints: Endpoint[]
   ) {    
       this.connectorApi = new EDCConnector( {     
@@ -56,7 +55,7 @@ export class EDCController implements ConnectorController {
           endpoints.find(e => e.name === 'public')?.path
         }`,
       },
-      auth: {username, password},
+      auth: { apiKey },
       controlPlane: {
         managementUrl: `https://${hostname}${
           endpoints.find(e => e.name === 'management')?.path
