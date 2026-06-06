@@ -28,8 +28,7 @@ import {
   Offer,
   Representation,
 } from 'dssim-core';
-import {EDCConnector} from 'edc-lib';
-import {UsageRuleMapper} from './UsageRuleMapper.js';
+import { EDCConnector } from 'edc-lib';
 
 /**
  * Controller for EDC (separated Control Plane and Data Plane)
@@ -40,32 +39,32 @@ export class EDCController implements ConnectorController {
   private httpReceiverUrl?: string;
 
   private agreements: {
-    [agreementId: string]: {providerUrl: string; assetId: string};
+    [agreementId: string]: { providerUrl: string; assetId: string };
   } = {};
 
   constructor(
     hostname: string,
-    apiKey: string,
+    username: string,
+    password: string,
     endpoints: Endpoint[]
-  ) {    
-      this.connectorApi = new EDCConnector( {     
-       healthUrl: `https://${hostname}${endpoints.find(e => e.name === 'health')?.path}`,
+  ) {
+    const apiKeyHeader = username || 'X-Api-Key';
+    const apiKey = password;
+    this.connectorApi = new EDCConnector({
+      healthUrl: `https://${hostname}${endpoints.find(e => e.name === 'health')?.path}`,
       dataPlane: {
-        publicUrl: `https://${hostname}${
-          endpoints.find(e => e.name === 'public')?.path
-        }`,
+        publicUrl: `https://${hostname}${endpoints.find(e => e.name === 'public')?.path
+          }`,
       },
-      auth: { apiKey },
+      auth: { apiKey, apiKeyHeader },
       controlPlane: {
-        managementUrl: `https://${hostname}${
-          endpoints.find(e => e.name === 'management')?.path
-        }`,
-        controlUrl: `https://${hostname}${
-          endpoints.find(e => e.name === 'control')?.path
-        }`,
+        managementUrl: `https://${hostname}${endpoints.find(e => e.name === 'management')?.path
+          }`,
+        controlUrl: `https://${hostname}${endpoints.find(e => e.name === 'control')?.path
+          }`,
       },
     });
-    
+
   }
   getDescription(hostname: string): unknown {
     throw new Error('Method not implemented.');
@@ -98,7 +97,7 @@ export class EDCController implements ConnectorController {
     throw new Error('Method not implemented.');
   }
 
-  async initialize(): Promise<void> {}
+  async initialize(): Promise<void> { }
 
   async negotiateContract(
     endPointUrl: string,
@@ -109,15 +108,15 @@ export class EDCController implements ConnectorController {
       assetName: string;
     },
     counterPartyId?: "test-connector"
-  ): Promise<{contractId: string}> {
+  ): Promise<{ contractId: string }> {
 
-   throw new Error('Method not implemented.');
+    throw new Error('Method not implemented.');
   }
 
-async transferArtifactsForAgreement(
-  contractAgreementId: string
-): Promise<void> {
+  async transferArtifactsForAgreement(
+    contractAgreementId: string
+  ): Promise<void> {
 
-  throw new Error('Method not implemented.');
-}
+    throw new Error('Method not implemented.');
+  }
 }
