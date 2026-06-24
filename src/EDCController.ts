@@ -50,21 +50,36 @@ export class EDCController implements ConnectorController {
   ) {
     const apiKeyHeader = username || 'X-Api-Key';
     const apiKey = password;
-    this.connectorApi = new EDCConnector({
-      healthUrl: `https://${hostname}${endpoints.find(e => e.name === 'health')?.path}`,
-      dataPlane: {
-        publicUrl: `https://${hostname}${endpoints.find(e => e.name === 'public')?.path
-          }`,
-      },
-      auth: { apiKey, apiKeyHeader },
-      controlPlane: {
-        managementUrl: `https://${hostname}${endpoints.find(e => e.name === 'management')?.path
-          }`,
-        controlUrl: `https://${hostname}${endpoints.find(e => e.name === 'control')?.path
-          }`,
-      },
-    });
 
+    if (process.env.INCLUSTER === '1') {
+      const scheme = 'http';
+      console.log('EDCController: Running in-cluster, using HTTP for EDC API (url: ' + scheme + '://' + hostname + ')');
+      this.connectorApi = new EDCConnector({
+        healthUrl: `${scheme}://${hostname}:${endpoints.find(e => e.name === 'health')?.port}${endpoints.find(e => e.name === 'health')?.path}`,
+        dataPlane: {
+          publicUrl: `${scheme}://${hostname}:${endpoints.find(e => e.name === 'public')?.port}${endpoints.find(e => e.name === 'public')?.path}`,
+        },
+        auth: { apiKey, apiKeyHeader },
+        controlPlane: {
+          managementUrl: `${scheme}://${hostname}:${endpoints.find(e => e.name === 'management')?.port}${endpoints.find(e => e.name === 'management')?.path}`,
+          controlUrl: `${scheme}://${hostname}:${endpoints.find(e => e.name === 'control')?.port}${endpoints.find(e => e.name === 'control')?.path}`,
+        },
+      });
+    } else {
+      const scheme = 'https';
+      console.log('EDCController: Running out-of-cluster, using HTTPS for EDC API (url: ' + scheme + '://' + hostname + ')');
+      this.connectorApi = new EDCConnector({
+        healthUrl: `${scheme}://${hostname}${endpoints.find(e => e.name === 'health')?.path}`,
+        dataPlane: {
+          publicUrl: `${scheme}://${hostname}${endpoints.find(e => e.name === 'public')?.path}`,
+        },
+        auth: { apiKey, apiKeyHeader },
+        controlPlane: {
+          managementUrl: `${scheme}://${hostname}${endpoints.find(e => e.name === 'management')?.path}`,
+          controlUrl: `${scheme}://${hostname}${endpoints.find(e => e.name === 'control')?.path}`,
+        },
+      });
+    }
   }
   getDescription(hostname: string): unknown {
     throw new Error('Method not implemented.');
