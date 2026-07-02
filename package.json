@@ -39,7 +39,7 @@
   },
   "dependencies": {
     "dssim-core": "^0.1.0",
-    "edc-lib": "file:../edc-lib",
+    "edc-lib": "^0.2.0",
     "uuid": "^9.0.0"
   }
 }
