@@ -19,7 +19,10 @@ describe('UsageRuleMapper', () => {
 
   it('throws for unsupported policy types', () => {
     expect(() =>
-      UsageRuleMapper.mapUsagePolicyRule('asset-1', new NumberUsagesRestricted(3))
+      UsageRuleMapper.mapUsagePolicyRule(
+        'asset-1',
+        new NumberUsagesRestricted(3)
+      )
     ).toThrow('Usage policy not implemented by connector controller.');
   });
 });
