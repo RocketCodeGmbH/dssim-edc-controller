@@ -25,146 +25,126 @@ import {
   UsagePolicy,
   DatabaseType,
   Endpoint,
-  b64encode,
   waitFor,
+  b64encode,
+  Offer,
+  Representation,
 } from 'dssim-core';
-import {DataAddressDto, EDCConnector} from 'edc-lib';
-import {UsageRuleMapper} from './UsageRuleMapper.js';
+import {EDCConnector} from 'edc-lib';
+import {DataAddress} from 'edc-lib/management-api/asset-api';
+import {ContractRequest} from 'edc-lib/management-api/contract-negotiation-api';
 import {v4 as uuid} from 'uuid';
+import {UsageRuleMapper} from './UsageRuleMapper.js';
 
+const EDC_NAMESPACE = 'https://w3id.org/edc/v0.0.1/ns/';
+const DSP_PROTOCOL = 'dataspace-protocol-http';
+
+/**
+ * Controller for EDC (EDC 0.14.1, DataSpace Protocol / management-v3 API).
+ * Manages control-plane and data-plane endpoints with scheme/port routing.
+ */
 export class EDCController implements ConnectorController {
   public connectorApi: EDCConnector;
   private httpReceiverUrl?: string;
+  private hostname: string;
+  private endpoints: Endpoint[];
+  private inCluster: boolean;
 
   private agreements: {
     [agreementId: string]: {providerUrl: string; assetId: string};
   } = {};
+
   constructor(
-    private hostname: string,
+    hostname: string,
     username: string,
     password: string,
-    private endpoints: Endpoint[]
+    endpoints: Endpoint[]
   ) {
-    this.connectorApi = new EDCConnector(
-      `https://${hostname}${endpoints.find(e => e.name === 'control')?.path}`,
-      `https://${hostname}${
-        endpoints.find(e => e.name === 'datamanagement')?.path
-      }`,
-      username,
-      password
+    this.hostname = hostname;
+    this.endpoints = endpoints;
+    this.inCluster = process.env.INCLUSTER === '1';
+    const scheme = this.inCluster ? 'http' : 'https';
+    console.log(
+      `EDCController: Running ${
+        this.inCluster ? 'in-cluster' : 'out-of-cluster'
+      }, using ${scheme.toUpperCase()} for EDC API (url: ${scheme}://${hostname})`
     );
-  }
 
-  async initialize(): Promise<void> {}
+    const apiKeyHeader = username || 'X-Api-Key';
+    const apiKey = password;
 
-  async negotiateContract(
-    endPointUrl: string,
-    offeredRessource: {
-      offerId: string;
-      contractOfferId: string;
-      assetId: string;
-      assetName: string;
-    }
-  ): Promise<{contractId: string}> {
-    const connectorAddress = `${endPointUrl}:${
-      this.endpoints.find(e => e.name === 'ids')?.port
-    }${this.endpoints.find(e => e.name === 'ids')?.path}/data`;
-
-    const nego =
-      await this.connectorApi.contractNegotiationService.initiateContractNegotiation(
-        {
-          connectorId: 'http-pull-provider',
-          connectorAddress: connectorAddress,
-          protocol: 'ids-multipart',
-          offer: {
-            offerId: offeredRessource.offerId,
-            assetId: offeredRessource.assetId,
-            policy: UsageRuleMapper.mapUsagePolicyRule(
-              offeredRessource.assetId
-            ),
-          },
-        }
-      );
-    console.log(nego);
-
-    let contractAgreementId = '';
-    await waitFor(async () => {
-      const negoState =
-        await this.connectorApi.contractNegotiationService.getNegotiation(
-          nego.id!
-        );
-      if (negoState.state === 'CONFIRMED' && negoState.contractAgreementId) {
-        contractAgreementId = negoState.contractAgreementId;
-        return true;
-      } else {
-        return false;
-      }
+    this.connectorApi = new EDCConnector({
+      healthUrl: this.endpointUrl(hostname, 'health'),
+      dataPlane: {publicUrl: this.endpointUrl(hostname, 'public')},
+      auth: {apiKey, apiKeyHeader},
+      controlPlane: {
+        managementUrl: this.endpointUrl(hostname, 'management'),
+        controlUrl: this.endpointUrl(hostname, 'control'),
+      },
     });
-    this.agreements[contractAgreementId] = {
-      providerUrl: connectorAddress,
-      assetId: offeredRessource.assetId,
-    };
-    return {contractId: contractAgreementId};
   }
 
-  getArtifactsForAgreement(contractId: string): Promise<{url: string}[]> {
-    throw new Error('Method not implemented.');
+  private endpointUrl(host: string, name: string): string {
+    const ep = this.endpoints.find(e => e.name === name);
+    return this.inCluster
+      ? `http://${host}:${ep?.port}${ep?.path}`
+      : `https://${host}${ep?.path}`;
   }
 
-  downloadArtifact(
-    artifactUrl: string,
-    forceDownload?: boolean | undefined
-  ): Promise<unknown> {
-    throw new Error('Method not implemented.');
+  private dspAddress(host: string): string {
+    return this.endpointUrl(host, 'protocol');
   }
 
-  async transferArtifactsForAgreement(
-    contractAgreementId: string
-  ): Promise<void> {
-    if (!this.httpReceiverUrl) {
-      throw new Error(
-        'setHttpDataReceiver needs to be called before transferArtifactsForAgreement'
-      );
-    } else {
-      await this.connectorApi.transferProcessService.initiateTransfer({
-        connectorId: 'http-pull-provider',
-        connectorAddress: this.agreements[contractAgreementId].providerUrl,
-        contractId: contractAgreementId,
-        assetId: this.agreements[contractAgreementId].assetId,
-        managedResources: false,
-        dataDestination: {
-          properties: {
-            baseUrl: this.httpReceiverUrl,
-            type: 'HttpData',
-          },
+  private async requestCatalog(
+    endPointUrl: string
+  ): Promise<Record<string, unknown>> {
+    const res =
+      await this.connectorApi.controlPlane.catalogService.requestCatalogV3({
+        body: {
+          '@context': {'@vocab': EDC_NAMESPACE},
+          '@type': 'CatalogRequest',
+          counterPartyAddress: this.dspAddress(endPointUrl),
+          protocol: DSP_PROTOCOL,
         },
-        protocol: 'ids-multipart',
-        transferType: {},
       });
+    if (res.error) {
+      throw new Error(`Catalog request failed: ${JSON.stringify(res.error)}`);
     }
+    return (res.data ?? {}) as Record<string, unknown>;
   }
 
-  async getAllOffers(providerUrl: string): Promise<
-    {
-      offerId: string;
-      contractOfferId: string;
-      assetId: string;
-      assetName: string;
-    }[]
-  > {
-    const result = await this.connectorApi.catalogService.requestCatalog({
-      providerUrl: `${providerUrl}:${
-        this.endpoints.find(e => e.name === 'ids')?.port
-      }${this.endpoints.find(e => e.name === 'ids')?.path}/data`,
-    });
-    console.log(result['contractOffers']![0]);
-
-    return result['contractOffers']!.map(e => {
+  private extractOffers(catalog: Record<string, unknown>): {
+    offerId: string;
+    contractOfferId: string;
+    assetId: string;
+    assetName: string;
+    offerPolicy: Record<string, unknown>;
+    assigner: string;
+  }[] {
+    const raw = catalog['dcat:dataset'];
+    const datasets = Array.isArray(raw) ? raw : raw ? [raw] : [];
+    const participantId = String(
+      catalog['dspace:participantId'] ?? catalog['participantId'] ?? ''
+    );
+    return datasets.map(entry => {
+      const dataset = entry as Record<string, unknown>;
+      const rawPolicy = dataset['odrl:hasPolicy'];
+      const offerPolicy = (
+        Array.isArray(rawPolicy) ? rawPolicy[0] : rawPolicy ?? {}
+      ) as Record<string, unknown>;
+      const assetId = String(dataset['@id'] ?? '');
+      const offerId = String(offerPolicy['@id'] ?? '');
+      const assetName = String(
+        dataset['name'] ?? dataset['edc:name'] ?? assetId
+      );
+      const assigner = String(offerPolicy['assigner'] ?? participantId);
       return {
-        offerId: e.id!,
-        contractOfferId: e.id!,
-        assetId: e.asset!.id!,
-        assetName: e.asset!.properties!['asset:prop:name'],
+        offerId,
+        contractOfferId: offerId,
+        assetId,
+        assetName,
+        offerPolicy,
+        assigner,
       };
     });
   }
@@ -173,83 +153,21 @@ export class EDCController implements ConnectorController {
     throw new Error('Method not implemented.');
   }
 
-  createValueArtifact(artifact: Artifact, value: string): Promise<string> {
+  getArtifactsForAgreement(
+    contractAgreementId: string
+  ): Promise<{url: string}[]> {
     throw new Error('Method not implemented.');
   }
-  async createHttpEndpointArtifact(
-    artifact: Artifact,
-    endpointUrl: string,
-    mimeType: string,
-    apiKey?: {headerKey: string; value: string} | undefined,
-    basicAuth?: {username: string; password: string} | undefined,
-    ressourcePolling?: {delay: number; period: number} | undefined
-  ): Promise<string> {
-    const dataAddress: DataAddressDto = {
-      properties: {
-        name: 'Test asset',
-        baseUrl: endpointUrl,
-        type: 'HttpData',
-      },
-    };
-    if (basicAuth) {
-      dataAddress.properties['authKey'] = 'Authorization';
-      dataAddress.properties['authCode'] = `Basic ${b64encode(
-        `${basicAuth!.username}:${basicAuth!.password}`
-      )}`;
-    }
 
-    const assetId = uuid();
-    await this.connectorApi.assetService.createAsset({
-      asset: {
-        properties: {
-          'asset:prop:id': assetId,
-          'asset:prop:name': artifact.name,
-          'asset:prop:contenttype': mimeType,
-        },
-      },
-      dataAddress: dataAddress,
-    });
-    return assetId;
+  downloadArtifact(
+    artifactUrl: string,
+    forceDownload?: boolean
+  ): Promise<unknown> {
+    throw new Error('Method not implemented.');
   }
 
-  async createOfferForArtifact(
-    artifactId: string,
-    offer: {
-      name: string;
-      description?: string | undefined;
-      keywords?: string[] | undefined;
-      publisher?: string | undefined;
-      language?: string | undefined;
-      license?: string | undefined;
-      sovereign?: string | undefined;
-      start?: Date | undefined;
-      end?: Date | undefined;
-    },
-    representation: {
-      name?: string | undefined;
-      standard?: string | undefined;
-      mediaType: string;
-    },
-    catalog: {name: string; description?: string | undefined},
-    policy?: UsagePolicy | undefined
-  ): Promise<unknown> {
-    const policyId = uuid();
-    const createdPolicy = await this.connectorApi.policyService.createPolicy({
-      id: policyId,
-      policy: UsageRuleMapper.mapUsagePolicyRule(artifactId),
-    });
-    console.log(createdPolicy);
-
-    const contracDef =
-      await this.connectorApi.contractDefinitionService.createContractDefinition(
-        {
-          id: uuid(),
-          accessPolicyId: policyId,
-          contractPolicyId: policyId,
-          criteria: [],
-        }
-      );
-    return contracDef;
+  createValueArtifact(artifact: Artifact, value: string): Promise<string> {
+    throw new Error('Method not implemented.');
   }
 
   createDatabaseArtifact(
@@ -263,27 +181,228 @@ export class EDCController implements ConnectorController {
     throw new Error('Method not implemented.');
   }
 
-  async getFirstArtifact<T>(endPointUrl: string): Promise<T> {
+  getFirstArtifact<T>(endPointUrl: string): Promise<T> {
     throw new Error('Method not implemented.');
   }
 
-  async setHttpDataReceiver(url: string): Promise<void> {
-    // Register HTTP Dataplane
-    await this.connectorApi.dataplaneSelectorService.addEntry({
-      //"edctype": "dataspaceconnector:dataplaneinstance",
-      id: 'http-pull-provider-dataplane',
-      url: `http://${this.hostname}:${
-        this.endpoints.find(e => e.name === 'control')?.port
-      }${this.endpoints.find(e => e.name === 'control')?.path}/transfer`,
-      allowedSourceTypes: ['HttpData'],
-      allowedDestTypes: ['HttpProxy', 'HttpData'],
-      properties: {
-        publicApiUrl: `http://${this.hostname}:${
-          this.endpoints.find(e => e.name === 'public')?.port
-        }${this.endpoints.find(e => e.name === 'public')?.path}/`,
-      },
-    });
+  async initialize(): Promise<void> {}
 
+  async createHttpEndpointArtifact(
+    artifact: Artifact,
+    endpointUrl: string,
+    mimeType: string,
+    apiKey?: {headerKey: string; value: string},
+    basicAuth?: {username: string; password: string},
+    ressourcePolling?: {delay: number; period: number}
+  ): Promise<string> {
+    const assetId = uuid();
+    const dataAddress = {
+      type: 'HttpData',
+      name: artifact.name,
+      baseUrl: endpointUrl,
+    } as DataAddress & {
+      baseUrl: string;
+      name: string;
+      authKey?: string;
+      authCode?: string;
+    };
+    if (basicAuth) {
+      dataAddress.authKey = 'Authorization';
+      dataAddress.authCode = `Basic ${b64encode(
+        `${basicAuth.username}:${basicAuth.password}`
+      )}`;
+    } else if (apiKey) {
+      dataAddress.authKey = apiKey.headerKey;
+      dataAddress.authCode = apiKey.value;
+    }
+    const res = await this.connectorApi.controlPlane.assetService.createAssetV3(
+      {
+        body: {
+          '@context': {'@vocab': EDC_NAMESPACE},
+          '@id': assetId,
+          properties: {id: assetId, name: artifact.name, contenttype: mimeType},
+          dataAddress,
+        },
+      }
+    );
+    if (res.error) {
+      throw new Error(`Asset creation failed: ${JSON.stringify(res.error)}`);
+    }
+    return assetId;
+  }
+
+  async createOfferForArtifact(
+    artifactId: string,
+    offer: Offer,
+    representation: Representation,
+    catalog: {name: string; description?: string},
+    policy?: UsagePolicy
+  ): Promise<unknown> {
+    const policyId = uuid();
+    const policyRes =
+      await this.connectorApi.controlPlane.policyService.createPolicyDefinitionV3(
+        {
+          body: {
+            '@context': {'@vocab': EDC_NAMESPACE},
+            '@id': policyId,
+            policy: UsageRuleMapper.mapUsagePolicyRule(artifactId, policy),
+          },
+        }
+      );
+    if (policyRes.error) {
+      throw new Error(
+        `Policy creation failed: ${JSON.stringify(policyRes.error)}`
+      );
+    }
+    const cdRes =
+      await this.connectorApi.controlPlane.contractDefinitionService.createContractDefinitionV3(
+        {
+          body: {
+            '@context': {'@vocab': EDC_NAMESPACE},
+            '@id': uuid(),
+            accessPolicyId: policyId,
+            contractPolicyId: policyId,
+            assetsSelector: [],
+          },
+        }
+      );
+    if (cdRes.error) {
+      throw new Error(
+        `Contract definition creation failed: ${JSON.stringify(cdRes.error)}`
+      );
+    }
+    return cdRes.data;
+  }
+
+  async getAllOffers(endPointUrl: string): Promise<
+    {
+      offerId: string;
+      contractOfferId: string;
+      assetId: string;
+      assetName: string;
+    }[]
+  > {
+    const catalog = await this.requestCatalog(endPointUrl);
+    return this.extractOffers(catalog).map(o => ({
+      offerId: o.offerId,
+      contractOfferId: o.contractOfferId,
+      assetId: o.assetId,
+      assetName: o.assetName,
+    }));
+  }
+
+  async negotiateContract(
+    endPointUrl: string,
+    offeredRessource: {
+      offerId: string;
+      contractOfferId: string;
+      assetId: string;
+      assetName: string;
+    }
+  ): Promise<{contractId: string}> {
+    const counterPartyAddress = this.dspAddress(endPointUrl);
+    const catalog = await this.requestCatalog(endPointUrl);
+    const offer = this.extractOffers(catalog).find(
+      o => o.assetId === offeredRessource.assetId
+    );
+    if (!offer) {
+      throw new Error(
+        `No offer found for asset ${offeredRessource.assetId} at ${endPointUrl}`
+      );
+    }
+
+    const nego =
+      await this.connectorApi.controlPlane.contractNegotiationService.initiateContractNegotiationV3(
+        {
+          body: {
+            '@context': {'@vocab': EDC_NAMESPACE},
+            counterPartyAddress,
+            protocol: DSP_PROTOCOL,
+            policy: {
+              '@context': 'http://www.w3.org/ns/odrl.jsonld',
+              '@id': offer.offerId,
+              '@type': 'http://www.w3.org/ns/odrl/2/Offer',
+              assigner: offer.assigner,
+              target: offer.assetId,
+              ...offer.offerPolicy,
+            },
+          } as ContractRequest,
+        }
+      );
+    if (nego.error) {
+      throw new Error(
+        `Contract negotiation failed: ${JSON.stringify(nego.error)}`
+      );
+    }
+    const negotiationId = String(nego.data?.['@id'] ?? '');
+
+    let terminated = false;
+    await waitFor(async () => {
+      const status =
+        await this.connectorApi.controlPlane.contractNegotiationService.getNegotiationStateV3(
+          {path: {id: negotiationId}}
+        );
+      const state = status.data?.state;
+      if (state === 'TERMINATED') {
+        terminated = true;
+        return true;
+      }
+      return state === 'FINALIZED';
+    });
+    if (terminated) {
+      throw new Error(`Contract negotiation ${negotiationId} was terminated`);
+    }
+
+    const agreement =
+      await this.connectorApi.controlPlane.contractNegotiationService.getAgreementForNegotiationV3(
+        {path: {id: negotiationId}}
+      );
+    const contractId = String(agreement.data?.['@id'] ?? '');
+    this.agreements[contractId] = {
+      providerUrl: counterPartyAddress,
+      assetId: offer.assetId,
+    };
+    return {contractId};
+  }
+
+  async setHttpDataReceiver(url: string): Promise<void> {
     this.httpReceiverUrl = url;
+  }
+
+  async transferArtifactsForAgreement(
+    contractAgreementId: string
+  ): Promise<void> {
+    if (!this.httpReceiverUrl) {
+      throw new Error(
+        'setHttpDataReceiver needs to be called before transferArtifactsForAgreement'
+      );
+    }
+    const agreement = this.agreements[contractAgreementId];
+    if (!agreement) {
+      throw new Error(
+        `No agreement found for ${contractAgreementId}. Call negotiateContract first.`
+      );
+    }
+    const res =
+      await this.connectorApi.controlPlane.transferProcessService.initiateTransferProcessV3(
+        {
+          body: {
+            '@context': {'@vocab': EDC_NAMESPACE},
+            contractId: contractAgreementId,
+            counterPartyAddress: agreement.providerUrl,
+            protocol: DSP_PROTOCOL,
+            transferType: 'HttpData-PUSH',
+            dataDestination: {
+              type: 'HttpData',
+              baseUrl: this.httpReceiverUrl,
+            } as DataAddress & {baseUrl: string},
+          },
+        }
+      );
+    if (res.error) {
+      throw new Error(
+        `Transfer initiation failed: ${JSON.stringify(res.error)}`
+      );
+    }
   }
 }

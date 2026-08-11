@@ -1,6 +1,6 @@
 {
   "name": "dssim-edc-controller",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "EDC Component Controller Lib",
   "author": "Michel Otto",
   "type": "module",
@@ -38,8 +38,8 @@
     "vitest": "^0.29.2"
   },
   "dependencies": {
-    "dssim-core": "^0.1.0",
-    "edc-lib": "^0.1.0",
+    "dssim-core": "^1.0.0",
+    "edc-lib": "^0.2.0",
     "uuid": "^9.0.0"
   }
 }

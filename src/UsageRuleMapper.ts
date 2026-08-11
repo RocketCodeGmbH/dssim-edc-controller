@@ -18,36 +18,21 @@
  *
  */
 import {UsagePolicy, UsagePolicyType} from 'dssim-core';
-import {Policy} from 'edc-lib';
 
 export class UsageRuleMapper {
   static mapUsagePolicyRule(
     assetId: string,
     usagePolicy?: UsagePolicy
-  ): Policy {
-    const unrestrictedPolicy: Policy = {
-      uid: '231802-bb34-11ec-8422-0242ac120002',
-      permissions: [
-        {
-          target: assetId,
-          action: {
-            type: 'USE',
-          },
-          edctype: 'dataspaceconnector:permission',
-        },
-      ],
-      '@type': {
-        '@policytype': 'set',
-      },
-    };
-
+  ): Record<string, unknown> {
     if (
       !usagePolicy ||
       usagePolicy.type === UsagePolicyType.UnrestrictedPolicy
     ) {
-      return unrestrictedPolicy;
-    } else {
-      throw Error('Usage policy not implemented by connector controller.');
+      return {
+        '@context': 'http://www.w3.org/ns/odrl.jsonld',
+        '@type': 'Set',
+      };
     }
+    throw new Error('Usage policy not implemented by connector controller.');
   }
 }
